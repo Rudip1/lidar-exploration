@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+"""Convert the RPLidar ``LaserScan`` into a ``PointCloud2`` on ``/cloud_in`` for OctoMap."""
 
 import sensor_msgs.point_cloud2 as pc2
 import rospy
@@ -15,6 +16,7 @@ pc_pub = rospy.Publisher("/cloud_in", PointCloud2, queue_size=1)
 
 
 def scan_cb(msg):
+    """Project a LaserScan into a PointCloud2 and publish it on ``/cloud_in``."""
     pc2_msg = lp.projectLaser(msg)
     # print(pc2_msg)
     pc_pub.publish(pc2_msg)

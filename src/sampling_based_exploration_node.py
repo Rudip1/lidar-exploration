@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Information-gain goal selection node (Stonefish simulation, frame ``world_ned``)."""
 
 import rospy
 import numpy as np
@@ -12,6 +13,13 @@ from lidar_based_exploration.msg import GoalStatus
 
 
 class SamplingExplorer:
+    """ROS node that selects exploration goals by information gain.
+
+    Subscribes to ``/projected_map`` (OctoMap projection), ``/turtlebot/odom_ground_truth`` and
+    ``/goal_reached``; publishes the selected goal on ``/move_base_simple/goal``
+    and RViz markers on ``/goal_marker``, ``/sampled_goals`` and ``/filtered_goals``
+    (frame ``world_ned``). A new goal is sampled once per second while no goal is active.
+    """
     def __init__(self):
         rospy.init_node("sampling_explorer")
 
@@ -43,6 +51,7 @@ class SamplingExplorer:
         rospy.loginfo("Sampling Exploration node is ready.")
 
     def map_callback(self, msg):
+        """Store the occupancy grid (transposed to ``[x, y]`` indexing) and update the validity checker."""
         self.map_received = True
         self.resolution = msg.info.resolution
         self.origin = [msg.info.origin.position.x, msg.info.origin.position.y]
@@ -52,6 +61,7 @@ class SamplingExplorer:
         self.svc.set(self.map, self.resolution, self.origin)
 
     def odom_callback(self, msg): # converts robot's odometery to a 3D pose
+        """Store the robot pose ``[x, y, yaw]`` from odometry."""
         self.odom_received = True
         self.robot_pose = np.array([
             msg.pose.pose.position.x,
@@ -60,6 +70,7 @@ class SamplingExplorer:
         ])
 
     def get_yaw_from_quat(self, orientation):
+        """Return the yaw (rad) of a ``geometry_msgs/Quaternion``."""
         import tf
         quaternion = (
             orientation.x,
@@ -70,12 +81,18 @@ class SamplingExplorer:
         _, _, yaw = tf.transformations.euler_from_quaternion(quaternion)
         return yaw
     def goal_reached_callback(self, msg):
+        """Allow a new goal to be sampled once the planner reports the current one finished."""
         if msg.data and self.goal_sent:
             rospy.loginfo("Goal reached! resampling next goal...")
             self.goal_sent = False
         
 
     def main_loop(self, event):
+        """Timer callback: sample candidates, keep valid ones with info gain above 0.37 m^2, publish the best.
+
+        After more than ``max_no_goal_cycles`` cycles without an informative goal the
+        exploration is considered complete and a coverage summary is logged.
+        """
         if self.summary_logged:
             rospy.loginfo_throttle(30, "Exploration is complete. No new goals will be sampled.")
             return
@@ -130,6 +147,7 @@ class SamplingExplorer:
         self.publish_filtered_points(filtered_goals)
     # calculates the percentage of explored and unexplored cells
     def log_exploration_summary(self):
+        """Log the number and percentage of explored (known) and unexplored map cells."""
         total_cells = self.map.size
         explored_cells = np.count_nonzero(self.map != -1)
         unexplored_cells = np.count_nonzero(self.map == -1)
@@ -145,6 +163,7 @@ class SamplingExplorer:
 
 
     def publish_goal(self, goal):
+        """Publish ``goal`` ``[x, y]`` as a ``PoseStamped`` and as a marker."""
         msg = PoseStamped()
         msg.header.frame_id = "world_ned"
         msg.header.stamp = rospy.Time.now()
@@ -155,6 +174,7 @@ class SamplingExplorer:
         self.goal_pub.publish(msg)
         self.publish_goal_marker(goal)
     def publish_goal_marker(self, goal):
+        """Publish a red sphere marker at ``goal``."""
         marker = Marker()
         marker.header.frame_id = "world_ned"
         marker.header.stamp = rospy.Time.now()
@@ -176,6 +196,7 @@ class SamplingExplorer:
         self.goal_marker_pub.publish(marker)
 
     def publish_sampled_points(self, goals):
+        """Publish all valid sampled candidates as a points marker."""
         marker = Marker()
         marker.header.frame_id = "world_ned"
         marker.header.stamp = rospy.Time.now()
@@ -201,6 +222,7 @@ class SamplingExplorer:
         self.samples_marker_pub.publish(marker)
 
     def publish_filtered_points(self, goals):
+        """Publish the candidates that passed the information-gain filter as a points marker."""
         marker = Marker()
         marker.header.frame_id = "world_ned"
         marker.header.stamp = rospy.Time.now()

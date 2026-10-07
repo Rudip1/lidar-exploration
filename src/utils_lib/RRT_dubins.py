@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""RRT* path planner whose edges are Dubins curves."""
 
 
 ########################
@@ -16,6 +17,15 @@ from math import sqrt
 
 # class that represent a node in the RRT tree
 class Node:
+    """A vertex of the RRT tree.
+
+    Attributes:
+        x, y: Position in world coordinates (m).
+        yaw: Heading (rad) used as the start heading of Dubins segments leaving this node.
+        parent: Parent node in the tree, ``None`` for the root.
+        debiuns_path: Sampled ``[x, y]`` points of the Dubins segment from ``parent``
+            to this node (set when the node is added to the tree).
+    """
     def __init__(self , x , y  ,yaw = 0):
         self.x = x 
         self.y = y 
@@ -27,6 +37,7 @@ class Node:
 
     # calculate the distance between the current node and the target node
     def get_distance(self,target):
+        """Return the Euclidean distance (m) from this node to ``target``."""
         distance = sqrt( (self.x-target.x)**2 + (self.y-target.y)**2 )
         return distance 
     # find the nearest node from the 
@@ -41,12 +52,17 @@ class Node:
             
     #     return nearest_node
     def nearest_node(self, nodes):
+        """Return the node in ``nodes`` closest to this one (KD-tree query)."""
         nodes_array = np.array([(node.x, node.y) for node in nodes])
         tree = cKDTree(nodes_array)
         dist, idx = tree.query([self.x, self.y], k=1)
         return list(nodes)[idx]
     # used for optimal parent selection
     def nodes_with_in_radius(self, nodes, radius , k = 20):
+        """Return up to ``k`` nearest nodes of ``nodes`` within ``radius`` (m), excluding self.
+
+        Used by RRT* to select candidate parents and rewiring neighbours.
+        """
 
         nodes = list(nodes)
         # builds a 2D NumPy array of the positions of all nodes
@@ -74,6 +90,18 @@ class Node:
         return str(self.id)
 # class that represent the RRT tree
 class RRT:
+    """RRT* planner whose edges are Dubins curves, checked against a StateValidityChecker.
+
+    Args:
+        svc: StateValidityChecker holding the current occupancy map.
+        k: Maximum number of sampling iterations.
+        q: Extension step length (m) from the nearest node towards a sample.
+        p: Probability of sampling the goal instead of a random point.
+        dominion: Sampling bounds ``[x_min, x_max, y_min, y_max]``. Note: the
+            constructor currently overrides it with the extent of the map held by ``svc``.
+        max_time: Planning time budget (s); extended by 0.5 s while no goal is found.
+        is_RRT_star: Enable the RRT* rewiring step.
+    """
     def __init__(self,svc,k,q,p,dominion = [-10,10,-10,10] ,max_time = 7, is_RRT_star = True):
         
         self.svc = svc
@@ -106,6 +134,14 @@ class RRT:
         self.debiun_radius = 0.2
     #chooses the best parent for a new node for RRT*
     def optimal_parent(self,qnew,current_parent):
+        """Choose the parent for ``qnew`` among its neighbours within ``self.radius``.
+
+        Returns:
+            ``(parent, dubins_path)``; ``dubins_path`` is empty when ``current_parent`` is kept.
+
+        TODO: ``best_cost`` is not updated inside the loop, so the last cheaper
+        collision-free neighbour is returned rather than the cheapest one.
+        """
         self.vertices = self.node_list.keys()
         # filter a nodes with a given radius 
         nodes_with_in_radius = qnew.nodes_with_in_radius(self.vertices,self.radius)
@@ -132,6 +168,12 @@ class RRT:
             return best_parent , path
     #improves the tree by rewiring nearby nodes through the new one if it is cheaper.
     def rewire(self,qnew):
+        """RRT* rewiring step: reconnect neighbours of ``qnew`` through it when cheaper.
+
+        TODO: the candidate cost is ``cost(node) + len(path)``, which is never lower than
+        ``cost(node)``, so no rewiring currently happens; the body also refers to
+        ``self.node``, which is not defined.
+        """
         # filter a nodes with a given radius 
         self.vertices = self.node_list.keys()
         nodes_with_in_radius = qnew.nodes_with_in_radius(self.vertices,self.radius)
@@ -171,6 +213,7 @@ class RRT:
     #incase of rewiring used to update g_score
     #used to sample random configuration with bias towards goal
     def Rand_Config(self):       
+        """Sample a random configuration in the planning bounds, returning the goal with probability ``p``."""
         prob = random.random() # generate a random number between 0 and 1
         # generate a random node with in the dominion 
         x = random.uniform(self.dominion[0],self.dominion[1])
@@ -184,11 +227,13 @@ class RRT:
         return qrand  
     # identifies the best node to extend the tree          
     def Near_Vertices(self , qrand):
+        """Return the tree node nearest to ``qrand``."""
         self.vertices = self.node_list.keys()
         qnear =  qrand.nearest_node(self.vertices ) # find the nearest node from the vertices
         return qnear
     # to extend the tree from qnear to qrand
     def New_Config(self , qnear , qrand):
+        """Steer from ``qnear`` towards ``qrand`` by at most the step length ``q``."""
         dir_vector = np.array([qrand.x -  qnear.x , qrand.y - qnear.y])
         length = qnear.get_distance(qrand)
         if(length == 0):
@@ -203,6 +248,10 @@ class RRT:
     # returns final smooth dubins path from gaol to start
     #converts parent pointer tree to a dubins-smoothed path 
     def reconstruct_db_path(self):
+        """Follow parent pointers from the goal and return the concatenated Dubins waypoints.
+
+        Also stores the node-to-node path (start to goal) in ``self.path``.
+        """
         self.debiuns_path = []
         self.path = []
         node = self.goal
@@ -218,15 +267,26 @@ class RRT:
      # returns a raw node-to-node path not interpolated like dubins   
     
     def wrap_angle(self,angle):
+       """Wrap ``angle`` (rad) to the interval [-pi, pi)."""
        return (angle + ( 2.0 * np.pi * np.floor( ( np.pi - angle ) / ( 2.0 * np.pi ) ) ) )
     
     # get the tree of the RRT
     def get_tree(self):
+        """Return the tree edges as ``[[x0, y0], [x1, y1]]`` pairs for visualisation."""
         tree_list = [[[edge[0].x , edge[0].y] ,[edge[1].x , edge[1].y]] for edge in self.edges]
         return tree_list
 
     # Generates a Dubins path between two nodes
     def dubins_check(self, from_node, to_node):
+        """Build the Dubins path between two nodes and check it for collisions.
+
+        The start heading is ``from_node.yaw``; the end heading points from
+        ``from_node`` to ``to_node``. The path is sampled every ``self.step_size`` m with
+        turning radius ``self.debiun_radius``.
+
+        Returns:
+            ``(collision_free, waypoints)`` where ``waypoints`` is a list of ``[x, y]``.
+        """
         # Compute desired goal heading based on direction to target
         to_yaw = self.wrap_angle(math.atan2(to_node.y - from_node.y, to_node.x - from_node.x))
 
@@ -248,6 +308,12 @@ class RRT:
 
     # computes collision free dubins path from start to goal using RRT*
     def compute_path(self , start , goal):
+        """Plan from ``start`` ``(x, y, yaw)`` to ``goal`` ``(x, y)``.
+
+        Returns:
+            ``(dubins_waypoints, node_path)`` if the goal is reached, otherwise
+            ``([], tree_edges)``.
+        """
         #starts timer
         self.start_time = time.time()
 

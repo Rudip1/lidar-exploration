@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+"""Online Dubins RRT* planning and pure pursuit control node (Stonefish simulation)."""
 import argparse
 import numpy as np
 import rospy
@@ -18,6 +19,22 @@ import time
 from utils_lib.online_planning import StateValidityChecker, compute_path , wrap_angle, pure_p_control
 from lidar_based_exploration.msg import GoalStatus
 class OnlinePlanner:
+    """ROS node that plans with Dubins RRT* and tracks the path with pure pursuit.
+
+    Receives goals on ``/move_base_simple/goal``, replans when the map invalidates the
+    current path, runs a 100 Hz control loop and outputs wheel velocities (``Float64MultiArray``) on ``/turtlebot/kobuki/commands/wheel_velocities``. Publishes
+    ``/goal_reached`` when a goal is reached, rejected or abandoned after 7 failed
+    planning attempts.
+
+    Args:
+        gridmap_topic: ``nav_msgs/OccupancyGrid`` topic.
+        odom_topic: ``nav_msgs/Odometry`` topic.
+        cmd_vel_topic: Velocity command topic.
+        bounds: Sampling bounds ``[x_min, x_max, y_min, y_max]`` or ``None`` for the map extent.
+        distance_threshold: Safety margin (m) for the validity checker.
+        is_unknown_valid: Treat unknown cells as free.
+        is_rrt_star: Planner configuration flag passed to the validity checker.
+    """
     # OnlinePlanner Constructor
     def __init__(self, gridmap_topic, odom_topic, cmd_vel_topic, bounds, distance_threshold ,is_unknown_valid ,is_rrt_star):
         #list of waypoints/current path to follow
@@ -81,6 +98,7 @@ class OnlinePlanner:
         rospy.Timer(rospy.Duration(0.01), self.controller)
     
     def get_odom(self, odom):
+        """Update the current pose ``[x, y, yaw]`` and append it to the trajectory."""
     
         _, _, yaw = tf.transformations.euler_from_quaternion([odom.pose.pose.orientation.x, 
                                                               odom.pose.pose.orientation.y,
@@ -96,6 +114,7 @@ class OnlinePlanner:
         timer = (odom.header.stamp - self.last_odom_time).to_sec()
     
     def get_goal(self, goal):
+        """Handle a new goal: validate goal and start, then plan (or signal rejection / recover)."""
         rospy.loginfo(f" Received GOAL: ({goal.pose.position.x:.2f}, {goal.pose.position.y:.2f})")
         if self.svc.there_is_map: 
             self.trial = 0
@@ -118,6 +137,7 @@ class OnlinePlanner:
                 self.plan()
     # rotates the robot in place for 8 sec            
     def rotate_to_explore(self):
+        """Rotate in place at ``w_max`` for 8 s (blocking)."""
         start_time = rospy.Time.now()
         duration = 8
         while(rospy.Time.now() - start_time).to_sec() < duration:
@@ -125,6 +145,7 @@ class OnlinePlanner:
         self.__send_commnd__(0, 0)
     # drives back the robot for 1 second 
     def move_back(self):
+        """Drive backwards at 0.3 m/s for 1 s (blocking)."""
         start_time = rospy.Time.now()
         duration = 1
         v =0.3
@@ -134,6 +155,7 @@ class OnlinePlanner:
         self.__send_commnd__(0, 0)
     # finds invalid grid cell near the robot 
     def recovery_behavior(self):
+        """Move 1 s away from the nearest occupied cell, then replan."""
         # pass
         pose = self.svc.is_not_valid(self.current_pose[0:2])
         if pose is not None: # if ththere is nearby invalid cells
@@ -159,6 +181,7 @@ class OnlinePlanner:
             self.plan()
             
     def get_gridmap(self, gridmap):
+        """Update the map (at most every 0.8 s) and replan if the current path became invalid."""
         if (gridmap.header.stamp - self.last_map_time).to_sec() > 0.8:            
             self.last_map_time = gridmap.header.stamp
             date = str(rospy.Time.now())
@@ -202,6 +225,7 @@ class OnlinePlanner:
                    self.plan()
               
     def plan(self):
+        """Run the planner up to 7 times until a path to ``self.goal`` is found."""
         self.v = 0
         self.w = 0
         if self.goal is None:
@@ -248,6 +272,7 @@ class OnlinePlanner:
     # call every 10ms by ros times  
     
     def controller(self, event):
+        """Control loop: follow the path waypoint by waypoint and confirm the goal within 0.25 m."""
         SAFE_GOAL_THRESHOLD = 0.25  # Accept goal if robot is within 25 cm
 
         if len(self.path) > 0: # do we a path to follow
@@ -327,6 +352,7 @@ class OnlinePlanner:
       
     #draws the final smoothed path from the robot to the goal        
     def publish_path(self):
+        """Publish the planned path as a line-strip marker on ``~path_marker``."""
         path = self.path.copy()
         if len(self.path) > 1:
             # print("Publish path!")
@@ -414,6 +440,7 @@ class OnlinePlanner:
     #                 m.colors.append(color_black)
     #         self.tree_pub.publish(m)
     def publish_trajectory(self , pose):
+        """Publish the trajectory driven so far as a line-strip marker on ``~robot_trajectory``."""
         marker = Marker()
         marker.header.frame_id = "world_ned"  
         marker.header.stamp = rospy.Time.now()
@@ -433,6 +460,7 @@ class OnlinePlanner:
         self.trajetory_pub.publish(marker)
        
     def distance_to_target(self , target):
+        """Return the Euclidean distance (m) from the robot to ``target``."""
         return   math.sqrt((self.current_pose[0] - target[0])**2 + (self.current_pose[1] - target[1])**2)
     
 # MAIN FUNCTION
