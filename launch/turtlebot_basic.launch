@@ -33,7 +33,10 @@
             <remap from="wheel_velocities" to="/$(arg robot_name)/kobuki/commands/wheel_velocities"/>
         </node>
 
-        <!-- Run Simple Odometry -->
+        <!-- Run Simple Odometry.
+             TODO: odom_to_tf.py is not part of this repository; it must be provided
+             by an external package that broadcasts the odometry message as a TF. -->
+
         <node name="diff_drive_odom" pkg="pick_up_objects_task" type="odom_to_tf.py" output="screen">
             <remap from="odom" to="/$(arg robot_name)/odom_ground_truth"/>
             <param name="base_link" value="$(arg robot_name)/base_link"/>
@@ -42,6 +45,6 @@
 
 
         <!-- RVIZ -->
-        <node pkg="rviz" type="rviz" name="rviz" args="-d $(find pick_up_objects_task)/config/pick.rviz"/>
+        <node pkg="rviz" type="rviz" name="rviz" args="-d $(find lidar_based_exploration)/config/simulation.rviz"/>
     </group>
 </launch>

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Occupancy-grid validity checking, planner wrapper and pure pursuit controller (hardware tuning)."""
 import numpy as np
 import math
 from time import time
@@ -15,6 +16,7 @@ local_resolution = None
 
 # wraps angle into -pi to pi
 def wrap_angle(angle):
+    """Wrap ``angle`` (rad) to the interval [-pi, pi)."""
     return (angle + ( 2.0 * np.pi * np.floor( ( np.pi - angle ) / ( 2.0 * np.pi ) ) ) )
 
 class StateValidityChecker:
@@ -24,6 +26,11 @@ class StateValidityChecker:
         #tranforming between world and map coordinates
     """
     def __init__(self, distance=0.22, is_unknown_valid=True , is_rrt_star = True):
+        """Args:
+            distance: Safety margin (m) around a pose that must be obstacle free.
+            is_unknown_valid: Treat unknown (-1) and out-of-map cells as free.
+            is_rrt_star: Stored for the planner configuration.
+        """
         self.map = None 
         self.resolution = None
         self.origin = None
@@ -35,6 +42,13 @@ class StateValidityChecker:
 
     # Initialize map details: occupancy grid, resolution, origin, and size
     def set(self, data, resolution, origin):
+        """Load a new occupancy grid.
+
+        Args:
+            data: 2D array indexed ``[x_cell, y_cell]`` with 0 = free, -1 = unknown, >0 = occupied.
+            resolution: Cell size (m).
+            origin: World position ``[x, y]`` of cell ``[0, 0]``.
+        """
         global local_map, local_origin, local_resolution
         self.map = data
         self.resolution = resolution
@@ -49,11 +63,13 @@ class StateValidityChecker:
 
     # Compute Euclidean distance between two 2D positions
     def get_distance( self , first_pose , second_pose):
+        """Return the Euclidean distance (m) between two 2D poses."""
         return math.sqrt((second_pose[0] - first_pose[0] )**2 + (second_pose[1] - first_pose[1]) **2)
 
 # Checks if a 2D pose is valid
 # checks a square area around the pose based on safety distance
     def is_valid(self, pose):
+        """Return True if every cell within ``distance`` of ``pose`` (world ``[x, y]``) is free."""
 
         # Convert world coordinate to discrete grid indices        
         m = self.__position_to_map__(pose)
@@ -79,6 +95,10 @@ class StateValidityChecker:
 
     # Checks if a 2D pose is not valid, used for recovery
     def is_not_valid(self, pose): 
+        """Return the first non-free cell (map indices) around ``pose``, or ``None``.
+
+        Used by the recovery behaviour to decide which way to move.
+        """
         
         m = self.__position_to_map__(pose)
         grid_distance = int(self.distance/self.resolution)
@@ -101,6 +121,7 @@ class StateValidityChecker:
 
     # Validates a list of waypoints
     def check_path_smooth(self,paths):
+        """Return True if every waypoint in ``paths`` passes :meth:`is_valid`."""
         for path in paths:
             if(not self.is_valid(path)):
                 return False
@@ -123,12 +144,14 @@ class StateValidityChecker:
             return [w_x, w_y]
     # returns true if the pose lies in the map bound  
     def is_on_map(self,pose):    
+        """Return True if map indices ``pose`` lie inside the grid."""
         if( 0<=pose[0]< self.height and 0<= pose[1] < self.width):
             return True        
         else:
             return False
     # checks if a given pose is free, unknown  
     def is_free(self, pose): 
+        """Return whether map cell ``pose`` is free (unknown cells follow ``is_unknown_valid``)."""
         # if is is free return True , which means  
         if self.map[pose[0],pose[1]] == 0 :
             return True, 
@@ -139,6 +162,14 @@ class StateValidityChecker:
 
 # Main RRT* wrapper
 def compute_path(start_p, goal_p, svc, bounds = None , max_time=5.0):
+    """Plan a Dubins RRT* path from ``start_p`` ``(x, y, yaw)`` to ``goal_p`` ``(x, y)``.
+
+    Uses 3000 iterations, a 0.4 m step and a 0.3 goal bias. ``bounds`` defaults to
+    the map extent (the RRT constructor currently uses the map extent regardless).
+
+    Returns:
+        ``(path, tree)`` as returned by :meth:`RRT.compute_path`.
+    """
     if bounds is None:
         x_min = svc.origin[0]
         x_max = svc.origin[0] + svc.width * svc.resolution
@@ -163,6 +194,18 @@ def compute_path(start_p, goal_p, svc, bounds = None , max_time=5.0):
 # This is pure pursuit controller 
 # follows a path by steering towards a lookahead point.
 def pure_p_control(current, goal):
+    """Pure pursuit velocity command towards ``goal`` (hardware-tuned variant).
+
+    Uses a 0.05 m lookahead and 0.15 m/s forward speed, halved when the heading
+    error exceeds 0.3 rad. The angular velocity sign is inverted for the real robot.
+
+    Args:
+        current: Robot pose ``(x, y, yaw)``.
+        goal: Waypoint ``(x, y)`` or ``(x, y, yaw)``.
+
+    Returns:
+        ``(v, w)`` linear (m/s) and angular (rad/s) velocity.
+    """
     # unpack current pose   
     R_x, R_y, R_yaw = current
     #handles cases where the goal may or may not include orientation:
