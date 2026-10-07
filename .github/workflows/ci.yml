@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ros-build:
+    name: colcon build (ROS Noetic)
+    runs-on: ubuntu-latest
+    container: ros:noetic-robot
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src/lidar_based_exploration
+
+      - name: Install colcon
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq python3-pip
+          pip3 install colcon-common-extensions
+
+      - name: Install build dependencies
+        run: |
+          rosdep update
+          rosdep install --from-paths src --ignore-src -y \
+            --dependency-types buildtool --dependency-types build --dependency-types build_export
+
+      - name: Build
+        run: |
+          source /opt/ros/noetic/setup.bash
+          colcon build --event-handlers console_cohesion+
+
+      - name: Check generated message and installed nodes
+        run: |
+          source install/setup.bash
+          python3 -c "from lidar_based_exploration.msg import GoalStatus; print(GoalStatus())"
+          test -x install/lidar_based_exploration/lib/lidar_based_exploration/turtlebot_online_path_planning_node.py
+          test -x install/lidar_based_exploration/lib/lidar_based_exploration/sampling_based_exploration_node.py
+          python3 -m py_compile src/lidar_based_exploration/src/*.py
+
+  python-import:
+    name: pip install + import test
+    runs-on: ubuntu-latest
+    container: python:3.8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Import planning libraries
+        env:
+          PYTHONPATH: src
+        run: |
+          python -c "import utils_lib.RRT_dubins, utils_lib.online_planning, utils_lib.online_planning_real, utils_lib.exploration_sampling"

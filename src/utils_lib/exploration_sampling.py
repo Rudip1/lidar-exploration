@@ -1,3 +1,4 @@
+"""Candidate goal sampling and information-gain scoring for sampling-based exploration."""
 import numpy as np
 import random
 import math
@@ -6,7 +7,17 @@ import math
 
 # samples candidate goals
 def sample_candidate_goals(origin, resolution, map_shape, num_samples=200, min_clearance=0.22, bounds=None):
-    """Randomly sample points within the known map area and filter close-to-obstacles."""
+    """Randomly sample candidate goals ``[x, y]`` uniformly inside the map or ``bounds``.
+
+    Args:
+        origin: World position of map cell ``[0, 0]``.
+        resolution: Cell size (m).
+        map_shape: Grid shape ``(nx, ny)``.
+        num_samples: Number of candidates to return.
+        min_clearance: Currently unused; obstacle filtering is done by the caller
+            with ``StateValidityChecker.is_valid``.
+        bounds: Optional ``[x_min, x_max, y_min, y_max]`` overriding the map extent.
+    """
     goals = []
     if bounds is None:
         min_x = origin[0]
@@ -28,7 +39,11 @@ def sample_candidate_goals(origin, resolution, map_shape, num_samples=200, min_c
 
 #estimates how much unknown space is around a sampled goal.
 def compute_info_gain(map_data, goal, origin, resolution, radius=2.0):
-    """Estimate how much unknown space is visible from the goal pose."""
+    """Return the unknown area (m^2) in a square of half-size ``radius`` (m) around ``goal``.
+
+    Visibility (occlusion by obstacles) is not modelled; every unknown (-1) cell in
+    the window counts.
+    """
     info_gain = 0
     radius_cells = int(radius / resolution) # convert radius in meters to map cells
     gx, gy = goal_to_map_coords(goal, origin, resolution)
@@ -53,7 +68,10 @@ def goal_to_map_coords(goal, origin, resolution):
 
 # ranks candidate goals based on their info gain and distance from the robot
 def score_goals(goals, robot_pose, info_gains, weight_gain=1.5, weight_dist=0.8):
-    """Score goals based on info gain and distance. Filter 0-gain goals before scoring."""
+    """Return the index of the goal maximising ``weight_gain * gain - weight_dist * distance``.
+
+    Goals with information gain below 0.01 m^2 are skipped; returns 0 if all are skipped.
+    """
     scored = []
 
     for i, goal in enumerate(goals):

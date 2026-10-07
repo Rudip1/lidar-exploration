@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "LiDAR-Based Autonomous Exploration with Dubins RRT*"
+abstract: >-
+  ROS Noetic package for autonomous exploration with a 2D LiDAR: information-gain
+  goal sampling, Dubins RRT* path planning and pure pursuit path tracking on a
+  TurtleBot (Kobuki), tested in the Stonefish simulator.
+type: software
+authors:
+  - given-names: Gebrecherkos
+    family-names: Gebrezgabhier
+  - given-names: Pravin
+    family-names: Oli
+version: 0.1.0
+license: Apache-2.0
+keywords:
+  - ROS
+  - autonomous exploration
+  - RRT*
+  - Dubins path
+  - pure pursuit
+  - OctoMap
