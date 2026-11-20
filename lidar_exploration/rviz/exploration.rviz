@@ -1,0 +1,66 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Cell Size: 1
+      Plane Cell Count: 30
+      Value: true
+    - Class: rviz_default_plugins/Map
+      Name: SLAM map
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+      Color Scheme: map
+      Alpha: 0.8
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Name: Current scan
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+      Size (m): 0.04
+      Color Transformer: FlatColor
+      Color: 239; 41; 41
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Name: Planned path
+      Topic:
+        Value: /exploration/path
+        Durability Policy: Transient Local
+      Color: 40; 160; 60
+      Line Style: Billboards
+      Line Width: 0.04
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Frontiers, goal, blocked goals
+      Topic:
+        Value: /exploration/markers
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Name: Robot
+      Description Topic:
+        Value: /robot_description
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Value: false
+  Global Options:
+    Fixed Frame: map
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 40
+      X: 8
+      Y: 0
+  Value: true
+Window Geometry:
+  Height: 900
+  Width: 1400

@@ -1,0 +1,27 @@
+# Parameters of explorer_node (defaults of lidar_exploration::ExplorerOptions). Distances in metres.
+explorer:
+  ros__parameters:
+    use_sim_time: true
+    map_frame: map
+    base_frame: base_footprint
+    control_rate: 20.0
+    map_padding: 1.0               # unknown band around the SLAM map, so its edge can be a frontier
+    # viewpoints
+    sensor_range: 12.0             # the simulated lidar's range
+    viewpoint_clearance: 0.50      # from occupied cells; kept above the inflation
+    min_gain: 1.0                  # m^2 of unknown floor a viewpoint must reveal
+    distance_decay: 0.15           # score = gain * exp(-distance_decay * distance)
+    viewpoint_search_radius: 1.5
+    max_candidates: 150
+    min_frontier_cells: 5
+    failed_selections_to_finish: 3
+    # Dubins RRT*
+    inflation: 0.45                # body corners are 0.36 m from base_footprint
+    turning_radius: 0.30
+    plan_through_unknown: true     # the path is re-checked against every new map
+    rrt_iterations: 1500
+    # pure pursuit
+    speed: 0.35
+    lookahead: 0.30
+    max_angular_speed: 1.0
+    goal_tolerance: 0.15
