@@ -1,22 +1,24 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
-title: "LiDAR-Based Autonomous Exploration with Dubins RRT*"
+title: "Autonomous LiDAR Exploration with Frontiers and Dubins RRT*"
 abstract: >-
-  ROS Noetic package for autonomous exploration with a 2D LiDAR: information-gain
-  goal sampling, Dubins RRT* path planning and pure pursuit path tracking on a
-  TurtleBot (Kobuki), tested in the Stonefish simulator.
+  ROS 2 Jazzy package for autonomous exploration with a 2-D lidar: frontier
+  viewpoints scored by ray-cast information gain, Dubins RRT* path planning and
+  pure pursuit, on slam_toolbox maps, evaluated in Gazebo Harmonic. The original
+  ROS Noetic version is kept at tag ros1-noetic.
 type: software
 authors:
   - given-names: Gebrecherkos
     family-names: Gebrezgabhier
   - given-names: Pravin
     family-names: Oli
-version: 0.1.0
+version: 1.0.0
 license: Apache-2.0
 keywords:
-  - ROS
+  - ROS 2
   - autonomous exploration
   - RRT*
   - Dubins path
   - pure pursuit
-  - OctoMap
+  - frontier exploration
+  - slam_toolbox

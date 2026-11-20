@@ -1,180 +1,147 @@
-# LiDAR-Based Autonomous Exploration with Dubins RRT*
+# Autonomous LiDAR Exploration with Frontiers and Dubins RRT\* (ROS 2)
 
-A ROS Noetic package that lets a TurtleBot (Kobuki) with a 2D LiDAR explore an unknown environment on its own: it samples goals by information gain, plans curvature-constrained paths with a Dubins RRT\*, and tracks them with a pure pursuit controller.
+A differential-drive robot with a 2-D lidar maps an unknown office floor on its own: it picks the frontier viewpoint
+that reveals the most unknown floor, plans a curvature-limited path to it with Dubins RRT\*, follows it with pure
+pursuit, and stops when nothing reachable is left to see. C++ for **ROS 2 Jazzy** and **Gazebo Harmonic** on Ubuntu
+24.04, with slam_toolbox as the mapper.
 
-<!-- TODO: add a demo GIF (< 10 MB) at media/demo.gif and uncomment the line below. -->
-<!-- ![Exploration demo](media/demo.gif) -->
-> **Demo:** TODO. No recording is included in the repository yet.
+![Exploration of the office floor in Gazebo: path and coverage over time](docs/results/office_floor.png)
 
-## Problem and approach
+## Result
 
-A robot entering an unknown building has no map, so it can't plan to a fixed target. It has to choose where to go next so that it uncovers as much unknown space as possible, then reach that point safely with a differential-drive base that can't turn on a dime.
+Three headless runs on the simulated office floor (Gazebo, 360-beam lidar to 12 m with 1 cm noise, slam_toolbox),
+each evaluated against the floor plan by [`evaluate_exploration.py`](lidar_exploration/scripts/evaluate_exploration.py).
+The CSV logs are in [`docs/results/`](docs/results); `python3 tools/plot_run.py docs/results/office_floor_run*.csv
+out.png` recomputes the figure and the numbers.
 
-The package splits this into three steps:
+| run | stopped by itself after | 90 % coverage after | distance driven | final coverage of the reachable free floor | goals reached / replans |
+|---|---|---|---|---|---|
+| [1](docs/results/office_floor_run1.csv) | 358 s | 154 s | 117.7 m | **98.4 %** (259.7 m²) | 5 / 7 |
+| [2](docs/results/office_floor_run2.csv) | 359 s | 187 s | 117.5 m | **96.5 %** (254.7 m²) | 4 / 4 |
+| [3](docs/results/office_floor_run3.csv) | 356 s | 179 s | 118.7 m | **98.0 %** (258.6 m²) | 5 / 3 |
 
-1. **Mapping.** The LiDAR scan is converted to a point cloud and fused into an OctoMap. Its 2D projection (`/projected_map`) is the occupancy grid that every other component uses.
-2. **Goal selection.** Once per second the explorer samples 50 random candidates. It drops any candidate within 0.22 m of an obstacle, then scores the rest by the unknown area inside a 1 m window (minus a distance penalty). Candidates with less than 0.37 m² of unknown area are ignored. After more than 10 cycles with no informative candidate, exploration is declared complete and the node logs the explored and unexplored cell percentages.
-3. **Planning and control.** RRT\* (up to 3000 iterations, 0.4 m step, 0.3 goal bias) connects nodes with Dubins curves (0.2 m turning radius, sampled every 0.1 m). Each sample is collision-checked against the grid. A pure pursuit controller follows the result. If a map update invalidates the path, the robot replans. It gives up after 7 failed planning attempts.
+In every run all occupied map cells lie within 15 cm of a real wall surface, and no free cell lies inside a wall. The
+explorer reaches only a few of its goals: most are dropped on the way because the lidar has already mapped the area
+around them, which is the intended behaviour. The runs differ only through the timing of the simulation; the explorer
+itself is deterministic.
 
-**Key result:** TODO. The repository has no recorded measurements (coverage percentage, exploration time, path length) to quote. The exploration node prints the coverage figures at the end of a run, and they should be added here.
-
-## Architecture
-
-The diagram follows the topics and calls in the source code. Topic names are for the simulation launch; the hardware variants are listed below the diagram.
+## How it works
 
 ```mermaid
-flowchart TB
-    subgraph Robot["TurtleBot (Stonefish sim or real)"]
-        LIDAR[/"RPLidar<br/>/turtlebot/kobuki/sensors/rplidar"/]
-        ODOM[/"Odometry<br/>/turtlebot/odom_ground_truth"/]
-        BASE["Wheel velocity input"]
+flowchart LR
+    subgraph Gazebo["lidar_exploration_gazebo (Gazebo Harmonic)"]
+        L["/scan"]
+        O["/tf odom→base_footprint"]
+        GT["/ground_truth/odometry"]
     end
-
-    L2P["laser_scan_to_point_cloud_node.py<br/>LaserProjection"]
-    OCTO["octomap_server"]
-
-    subgraph EXP["sampling_based_exploration_node.py · SamplingExplorer"]
-        S1["sample_candidate_goals()"] --> S2["StateValidityChecker.is_valid()"]
-        S2 --> S3["compute_info_gain()<br/>keep above 0.37 m²"]
-        S3 --> S4["score_goals()"]
+    S["slam_toolbox<br/>(online async)"]
+    subgraph E["explorer_node · Explorer"]
+        F["find_frontiers"] --> V["select_viewpoints<br/>(ray-cast gain)"]
+        V --> P["plan_path<br/>(Dubins RRT*)"]
+        P --> C["PathFollower<br/>(pure pursuit)"]
     end
-
-    subgraph PLAN["turtlebot_online_path_planning_node.py · OnlinePlanner"]
-        P1["StateValidityChecker"] --> P2["compute_path()<br/>RRT_dubins.RRT (Dubins RRT*)"]
-        P2 --> P3["controller() 100 Hz<br/>pure_p_control()"]
-    end
-
-    LIDAR -- LaserScan --> L2P
-    L2P -- "/cloud_in (PointCloud2)" --> OCTO
-    OCTO -- "/projected_map (OccupancyGrid)" --> EXP
-    OCTO -- "/projected_map" --> PLAN
-    ODOM --> EXP
-    ODOM --> PLAN
-    S4 -- "/move_base_simple/goal (PoseStamped)" --> PLAN
-    PLAN -- "/goal_reached (Bool)" --> EXP
-    P3 -- "/turtlebot/kobuki/commands/wheel_velocities" --> BASE
+    L --> S
+    O --> S
+    S -- "/map, TF map→odom" --> E
+    C -- "/cmd_vel" --> Gazebo
+    GT -.->|only| EV["evaluate_exploration.py"]
+    S -.-> EV
 ```
 
-The `*_real.py` nodes differ from the simulation versions as follows:
+Every second slam_toolbox publishes a new map; the explorer pads it with a 1 m band of unknown cells (a SLAM map ends
+where the observations end, so free space may touch its edge) and then:
 
-| | Simulation | Real robot |
-|---|---|---|
-| Odometry topic | `/turtlebot/odom_ground_truth` | `/turtlebot/kobuki/odom` |
-| Command output | `Float64MultiArray` wheel velocities | `Twist` on `/turtlebot/kobuki/commands/velocity` |
-| Fixed frame | `world_ned` | `odom` |
-| Goal sampling area | whole map | `[-1.0, 2.0] × [-1.5, 1.5]` m |
-| Pure pursuit | 0.08 m lookahead, 0.4 m/s | 0.05 m lookahead, 0.15 m/s (halved above 0.3 rad error) |
+1. **Frontiers** — free cells with an unknown 4-neighbour, grouped into 8-connected clusters
+   (Yamauchi, 1997). Clusters of fewer than 5 cells are ignored.
+2. **Viewpoints** — around up to 150 random frontier cells it samples a free cell at least 0.5 m from any obstacle
+   and scores it by the unknown area a 360° lidar would see from there (120 rays to 12 m, stopping at occupied
+   cells), discounted by distance: `gain · exp(−0.15 · d)`. Viewpoints that would reveal less than 1 m² are dropped.
+3. **Path** — the best viewpoints are tried in order with
+   [learn-motion-planning](https://github.com/Rudip1/learn-motion-planning)'s Dubins RRT\* (turning radius 0.3 m) on
+   the occupied cells inflated by 0.45 m; the robot's body corners are 0.36 m from its centre. A direct Dubins curve is
+   used when it is free. Otherwise RRT\* samples in the start–goal bounding box grown by 2 m, then 6 m, then the whole
+   map: a box much larger than the detour wastes the iterations on long, winding paths. Unknown cells are traversable
+   by default: slam_toolbox leaves unknown speckles and unmapped strips where a long beam found no return, and treating
+   them as walls blocks almost every path.
+4. **Following** — pure pursuit with a 0.3 m look-ahead at 0.35 m/s, turning in place when the look-ahead point is
+   more than 1 rad off the heading.
+5. **Re-checking** — on every new map the rest of the path is checked against the inflated obstacles (a wall seen in
+   formerly unknown space triggers a replan), and a goal whose surroundings have been mapped meanwhile is dropped.
+   Goals that cannot be reached are avoided for 30 s, and for good after three failures.
+6. **Finishing** — when three selections in a row, one map update apart, find no informative viewpoint.
 
-Earlier hand-drawn diagrams are kept in [`docs/`](docs/), along with an `rqt_graph` capture of the simulation (`docs/rosgraph.png`).
+The algorithm core (`exploration_core`) has no ROS dependency; `explorer_node` only converts messages and looks up
+the robot pose in TF.
 
-## Tested versions
+## Packages
 
-These versions were used to build the package and start the nodes (see [Install](#install) and [CI](.github/workflows/ci.yml)):
-
-| Component | Version |
+| package | contents |
 |---|---|
-| OS | Ubuntu 20.04 (Docker image `ros:noetic-robot`) |
-| ROS | Noetic |
-| Python | 3.8 |
-| Build tool | colcon (`colcon-common-extensions` from pip) |
-| `dubins` | 1.0.1 (pip) |
-| numpy / scipy / matplotlib / Pillow | Ubuntu 20.04 `python3-*` packages |
+| [`lidar_exploration`](lidar_exploration) | `Explorer` and its parts (ROS-free C++ core), `explorer_node`, `evaluate_exploration.py`, launch, slam_toolbox and explorer parameters, RViz, tests |
+| [`lidar_exploration_gazebo`](lidar_exploration_gazebo) | robot (URDF/xacro: diff drive, 12 m 2-D lidar), the office floor world and its wall list, ros_gz bridge, simulation launch |
 
-The Python-only CI job uses Python 3.8 with numpy 1.24.4, scipy 1.10.1, matplotlib 3.7.5, Pillow 10.4.0 and dubins 1.0.1.
+The office floor (20 m × 14 m: a corridor, six rooms, furniture; 264 m² of reachable free floor) is generated by
+[`make_office_floor.py`](lidar_exploration_gazebo/scripts/make_office_floor.py), which also writes the wall list that
+the evaluation and the plot use.
 
-The full simulation (Stonefish) and the real robot were **not** re-run while preparing this release.
+## Build
 
-## Install
-
-Verified in a `ros:noetic-robot` container:
+Ubuntu 24.04, ROS 2 Jazzy, Gazebo Harmonic (`ros-jazzy-ros-gz`), `ros-jazzy-slam-toolbox`.
 
 ```bash
-mkdir -p ~/catkin_ws/src && cd ~/catkin_ws/src
-git clone <this-repository-url> lidar_based_exploration
-cd ~/catkin_ws
-
-# ROS build dependencies
-rosdep update
-rosdep install --from-paths src --ignore-src -y \
-  --dependency-types buildtool --dependency-types build --dependency-types build_export
-
-# Python runtime dependencies (use the apt packages so they match ROS Noetic's numpy)
-sudo apt-get install -y python3-numpy python3-scipy python3-matplotlib python3-pil
-pip3 install dubins
-
-source /opt/ros/noetic/setup.bash
-colcon build
+mkdir -p ~/explore_ws/src && cd ~/explore_ws/src
+git clone https://github.com/Rudip1/lidar-exploration.git
+cd ~/explore_ws
+rosdep install --from-paths src --ignore-src -y
+source /opt/ros/jazzy/setup.bash
+colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
 ```
 
-> Installing numpy/scipy/matplotlib with pip on top of ROS Noetic's numpy 1.17 fails with
-> `Matplotlib requires numpy>=1.20`. Use the apt packages as shown above.
-
-To install the remaining runtime dependencies (`laser_geometry`, `octomap_server`, `rviz`, `rqt_gui`), run `rosdep install --from-paths src --ignore-src -y` without the `--dependency-types` filter.
+The first build downloads learn-motion-planning (pinned commit). Offline, point CMake at a local checkout:
+`colcon build --cmake-args -DFETCHCONTENT_SOURCE_DIR_LEARN_MOTION_PLANNING=/path/to/learn-motion-planning`.
 
 ## Run
 
-### Start the nodes (verified)
+```bash
+# Gazebo + slam_toolbox + explorer + RViz (frontiers in orange, goal arrow, planned path)
+ros2 launch lidar_exploration exploration.launch.py
 
-With a `roscore` running, both main nodes start and wait for map, odometry and goal data:
+# The reproducible experiment: headless, evaluated against the floor plan, then shut down
+ros2 launch lidar_exploration exploration.launch.py gui:=false rviz:=false evaluate:=true output:=run.csv
+python3 src/lidar-exploration/tools/plot_run.py run.csv run.png
+```
+
+Parameters are in [`config/explorer.yaml`](lidar_exploration/config/explorer.yaml) and
+[`config/slam_toolbox.yaml`](lidar_exploration/config/slam_toolbox.yaml) (slam_toolbox's online-async defaults with a
+1 s map update, keyframes every 0.2 m and the full 12 m lidar range).
+
+## Tests
 
 ```bash
-rosrun lidar_based_exploration turtlebot_online_path_planning_node.py
-rosrun lidar_based_exploration sampling_based_exploration_node.py
+colcon test --packages-select lidar_exploration && colcon test-result --verbose
 ```
 
-### Full simulation (not re-verified)
+No simulator needed:
 
-```bash
-roslaunch lidar_based_exploration stonefish.launch
-```
+- **Parts** — frontier clusters on hand-made maps; padding turns the map edge into a frontier; the information gain
+  of open space is the sensor disc (πr²) and a wall cuts off exactly the circular segment behind it; viewpoints are
+  free, clear of obstacles and ranked by score; the planner goes through a door while keeping the inflation distance,
+  finds no path when the door is closed, crosses unknown space only when allowed, and can start inside the inflation;
+  pure pursuit tracks a Dubins path to its end within 12 cm; the tests' floor plan equals the Gazebo world's wall list.
+- **Whole loop** — the explorer drives an ideal robot around the office floor while a simulated lidar builds the map
+  the way slam_toolbox does (a beam with no return within 12 m clears nothing). For three seeds it must finish by
+  itself, map more than 97 % of the reachable free floor, and keep its centre more than 0.41 m from every wall cell
+  (0.36 m body corner + 5 cm).
 
-This launch file also starts the Stonefish simulator, the LiDAR conversion node, OctoMap, RViz and an RQT GUI. It needs these packages, which are not part of this repository: `stonefish_ros`, `turtlebot_simulation`, `kobuki_description`, `octomap_server`, and an `odom_to_tf.py` odometry-to-TF broadcaster (see the TODO in `launch/turtlebot_basic.launch`).
+## Limitations
 
-### Real robot (not re-verified)
-
-```bash
-roslaunch lidar_based_exploration real.launch
-```
-
-The real-robot launch uses `config/octomap_real.yaml` (0.05 m resolution, bounding box `[-1, 2] × [-1, 2] × [0, 2]` m).
-
-## Results
-
-TODO: no quantitative results (coverage, exploration time, success rate) or recordings are stored in this repository. Add them here once they are available.
-
-## Repository layout
-
-```
-.
-├── CMakeLists.txt, package.xml   catkin package (message generation + install rules)
-├── msg/GoalStatus.msg            custom message (generated; not used by the nodes yet)
-├── launch/
-│   ├── stonefish.launch          simulation: robot + mapping + exploration + planning
-│   ├── turtlebot_basic.launch    Stonefish simulator and robot description
-│   └── real.launch               real TurtleBot
-├── config/                       RViz, RQT and OctoMap configuration
-├── src/
-│   ├── laser_scan_to_point_cloud_node.py
-│   ├── sampling_based_exploration_node.py  (+ _real)
-│   ├── turtlebot_online_path_planning_node.py  (+ _real)
-│   └── utils_lib/
-│       ├── exploration_sampling.py   goal sampling, information gain, scoring
-│       ├── online_planning.py        validity checker, planner wrapper, pure pursuit (+ _real)
-│       └── RRT_dubins.py             Dubins RRT* planner
-├── docs/                         diagrams and rqt_graph capture
-├── requirements.txt              pip dependencies of utils_lib
-└── .github/workflows/ci.yml      colcon build + Python import test
-```
-
-## Known limitations
-
-These are documented in the code with TODO notes. The algorithm behaviour has been left unchanged.
-
-- In `RRT.rewire`, the candidate cost can never be lower than the current cost, so RRT\* rewiring never takes effect. The branch also refers to an undefined `self.node`.
-- `RRT.optimal_parent` does not update the best cost inside its loop.
-- The `RRT` constructor ignores its `dominion` argument and always samples over the map extent. The real-robot bounds therefore do not restrict planning.
-- The `min_clearance` argument of `sample_candidate_goals` is unused.
+- The information gain is optimistic: unknown cells do not block its rays, and it ignores the beams that will find no
+  return. It ranks viewpoints well but overestimates what each will reveal.
+- Driving through unknown space relies on the map being re-checked every second at 0.35 m/s; a faster robot would
+  need a local obstacle check on the raw scan.
+- Tested in simulation only. The original ROS 1 version (Python, TurtleBot 2 in Stonefish, OctoMap) is kept at tag
+  [`ros1-noetic`](https://github.com/Rudip1/lidar-exploration/tree/ros1-noetic).
 
 ## Citation
 
@@ -186,6 +153,8 @@ Released under the [Apache License 2.0](LICENSE).
 
 ## Acknowledgements
 
-- **Gebrecherkos Gebrezgabhier** and **Pravin Oli** designed and implemented the system together.
+- **Gebrecherkos Gebrezgabhier** and **Pravin Oli** designed and implemented the original ROS 1 system together.
 - Thanks to **Narcis Palomeras**, **Sebastian** and **Martha** for supervision and guidance.
-- Built on [ROS](https://www.ros.org/), [OctoMap](https://octomap.github.io/), the [Stonefish](https://github.com/patrykcieslak/stonefish) simulator, and the [`dubins`](https://pypi.org/project/dubins/) Python package.
+- Built on [ROS 2](https://www.ros.org/), [Gazebo](https://gazebosim.org/),
+  [slam_toolbox](https://github.com/SteveMacenski/slam_toolbox) and
+  [learn-motion-planning](https://github.com/Rudip1/learn-motion-planning).
