@@ -153,7 +153,6 @@ Released under the [Apache License 2.0](LICENSE).
 
 ## Acknowledgements
 
-- **Gebrecherkos Gebrezgabhier** and **Pravin Oli** designed and implemented the original ROS 1 system together.
 - Thanks to **Narcis Palomeras**, **Sebastian** and **Martha** for supervision and guidance.
 - Built on [ROS 2](https://www.ros.org/), [Gazebo](https://gazebosim.org/),
   [slam_toolbox](https://github.com/SteveMacenski/slam_toolbox) and

@@ -8,8 +8,6 @@ abstract: >-
   ROS Noetic version is kept at tag ros1-noetic.
 type: software
 authors:
-  - given-names: Gebrecherkos
-    family-names: Gebrezgabhier
   - given-names: Pravin
     family-names: Oli
 version: 1.0.0
